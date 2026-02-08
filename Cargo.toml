@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "remoshot-common",
+    "remoshot-server",
+    "remoshot-client",
+]
+resolver = "2"

@@ -1,0 +1,83 @@
+import { Button, LineEdit, GroupBox, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component SettingsWindow inherits Window {
+    title: "RemoShot Settings";
+    min-width: 420px;
+    max-width: 420px;
+    min-height: 200px;
+    max-height: 200px;
+
+    in-out property <string> server-addr;
+    in-out property <string> machine-name;
+
+    callback save();
+    callback cancel();
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 8px;
+
+        Text {
+            text: "Server address";
+        }
+        server-edit := LineEdit {
+            text <=> root.server-addr;
+            placeholder-text: "ws://127.0.0.1:8283/ws";
+        }
+
+        Text {
+            text: "Machine name";
+        }
+        name-edit := LineEdit {
+            text <=> root.machine-name;
+            placeholder-text: "my-device";
+        }
+
+        HorizontalBox {
+            alignment: end;
+            spacing: 8px;
+
+            Button {
+                text: "Cancel";
+                clicked => { root.cancel(); }
+            }
+            Button {
+                text: "Save";
+                primary: true;
+                clicked => { root.save(); }
+            }
+        }
+    }
+}
+
+export component LogWindow inherits Window {
+    title: "RemoShot Logs";
+    preferred-width: 640px;
+    preferred-height: 480px;
+    min-width: 400px;
+    min-height: 240px;
+
+    in-out property <string> log-content;
+
+    callback clear-logs();
+
+    VerticalBox {
+        padding: 12px;
+        spacing: 8px;
+
+        log-view := TextEdit {
+            text: root.log-content;
+            read-only: true;
+        }
+
+        HorizontalBox {
+            alignment: end;
+            spacing: 8px;
+
+            Button {
+                text: "Clear";
+                clicked => { root.clear-logs(); }
+            }
+        }
+    }
+}
