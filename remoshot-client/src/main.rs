@@ -9,10 +9,17 @@ mod tray;
 slint::include_modules!();
 
 use log_buffer::{LogBuffer, LogBufferLayer};
+use single_instance::SingleInstance;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 fn main() {
+    let instance = SingleInstance::new("remoshot-client").unwrap();
+    if !instance.is_single() {
+        eprintln!("RemoShot client is already running!");
+        std::process::exit(1);
+    }
+
     let log_buf = LogBuffer::new(500);
 
     let registry = tracing_subscriber::registry()

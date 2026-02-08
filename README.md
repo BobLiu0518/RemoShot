@@ -11,6 +11,13 @@ sequenceDiagram
     participant ServerWS as 服务端 (WebSocket)
     participant Clients as 客户端们
 
+    Note over ServerWS: 生成和显示 SecretKey
+    Clients->>ServerWS: 建立 WebSocket 连接
+    ServerWS->>Clients: 发送认证挑战 (Nonce)
+    Clients->>ServerWS: 发送认证响应 (HMAC)
+    Note over ServerWS: 验证 HMAC
+    ServerWS->>Clients: 认证通过，维持连接
+
     User->>ServerHTTP: GET /screenshot
     ServerHTTP->>ServerWS: 向所有客户端广播截图请求
     ServerWS->>Clients: 发送截图请求
@@ -36,12 +43,20 @@ cargo build --release -p remoshot-client
 
 ### 服务端
 
+启动服务端时，会生成并显示一个 **SecretKey**（如不存在），这个密钥用于客户端认证。请妥善保管此密钥。
+
 ```bash
 # 通过命令行参数指定所有配置
 remoshot-server --ws-port 8283 --http-addr 127.0.0.1:8113 --retention 30
 
 # 不带参数启动，将交互式询问配置
 remoshot-server
+```
+
+启动后，服务端会在日志中显示 SecretKey：
+
+```
+INFO remoshot_server: Server SecretKey: abc123def456...
 ```
 
 参数说明：
@@ -56,6 +71,7 @@ remoshot-server
 
 - **Server address** — 服务端 WebSocket 地址，如 `ws://your-server:8283/ws`
 - **Machine name** — 本机名称，用于标识截图来源
+- **Secret key** — 服务端启动时显示的认证密钥
 
 之后客户端常驻系统托盘（无主窗口、无控制台），右键托盘图标可以：
 

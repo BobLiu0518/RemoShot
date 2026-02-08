@@ -88,6 +88,7 @@ fn show_settings_sync(config: &Arc<Mutex<Config>>) {
     let win = SettingsWindow::new().unwrap();
     win.set_server_addr(current.server_addr.as_str().into());
     win.set_machine_name(current.machine_name.as_str().into());
+    win.set_secret_key(current.secret_key.as_str().into());
 
     let win_weak = win.as_weak();
     let cfg = config.clone();
@@ -96,6 +97,7 @@ fn show_settings_sync(config: &Arc<Mutex<Config>>) {
         let new_config = Config {
             server_addr: w.get_server_addr().to_string(),
             machine_name: w.get_machine_name().to_string(),
+            secret_key: w.get_secret_key().to_string(),
         };
         config::save(&new_config);
         *cfg.lock().unwrap() = new_config;
@@ -129,6 +131,7 @@ fn show_settings_window(
     let win = SettingsWindow::new().unwrap();
     win.set_server_addr(current.server_addr.as_str().into());
     win.set_machine_name(current.machine_name.as_str().into());
+    win.set_secret_key(current.secret_key.as_str().into());
 
     let win_weak = win.as_weak();
     let cfg = config.clone();
@@ -141,6 +144,7 @@ fn show_settings_window(
         let new_config = Config {
             server_addr: w.get_server_addr().to_string(),
             machine_name: w.get_machine_name().to_string(),
+            secret_key: w.get_secret_key().to_string(),
         };
         config::save(&new_config);
         *cfg.lock().unwrap() = new_config;
@@ -233,7 +237,14 @@ fn start_connection(
             }
         });
 
-        connection::run(cfg.server_addr, cfg.machine_name, status_tx, cancel_rx).await;
+        connection::run(
+            cfg.server_addr,
+            cfg.machine_name,
+            cfg.secret_key,
+            status_tx,
+            cancel_rx,
+        )
+        .await;
     });
 }
 

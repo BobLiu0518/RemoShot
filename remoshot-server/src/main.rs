@@ -1,5 +1,6 @@
 mod cleanup;
 mod http;
+mod secret;
 mod state;
 mod ws;
 
@@ -39,6 +40,9 @@ async fn main() {
 
     let args = Args::parse();
 
+    let secret_key = secret::load_or_generate_secret();
+    tracing::info!("Server SecretKey: {}", secret_key);
+
     let ws_port: u16 = args.ws_port.unwrap_or_else(|| {
         prompt("WebSocket port for client connections")
             .parse()
@@ -59,7 +63,11 @@ async fn main() {
     let image_dir = PathBuf::from("images");
     std::fs::create_dir_all(&image_dir).expect("failed to create images directory");
 
-    let state = Arc::new(state::AppState::new(retention_mins, image_dir.clone()));
+    let state = Arc::new(state::AppState::new(
+        retention_mins,
+        image_dir.clone(),
+        secret_key,
+    ));
 
     let cleanup_state = state.clone();
     tokio::spawn(async move {

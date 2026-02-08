@@ -8,9 +8,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::state::AppState;
-use remoshot_common::ClientMessage;
 
 pub async fn run_ws_server(addr: SocketAddr, state: Arc<AppState>) {
     let app = Router::new()
@@ -27,67 +27,115 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-
     let client_id = state.next_id().await;
 
-    let send_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
-                break;
-            }
-        }
-    });
+    let nonce = Uuid::new_v4().to_string();
+    let challenge = remoshot_common::ServerMessage::AuthChallenge {
+        nonce: nonce.clone(),
+    };
+    let challenge_msg = serde_json::to_string(&challenge).unwrap();
+    if ws_tx
+        .send(Message::Text(challenge_msg.into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
 
     let client_name = loop {
         match ws_rx.next().await {
             Some(Ok(Message::Text(text))) => {
-                if let Ok(ClientMessage::Register { name }) = serde_json::from_str(&text) {
-                    break name;
+                if let Ok(remoshot_common::ClientMessage::AuthResponse { name, hmac }) =
+                    serde_json::from_str(&text)
+                {
+                    if remoshot_common::verify_hmac(&state.secret_key, &nonce, &hmac) {
+                        break name;
+                    } else {
+                        tracing::warn!("invalid HMAC from client {}", name);
+                        return;
+                    }
                 }
-                tracing::warn!("expected Register message, got: {}", text);
+                tracing::warn!("expected AuthResponse message, got: {}", text);
             }
             Some(Ok(Message::Close(_))) | None => {
-                send_task.abort();
                 return;
             }
             _ => continue,
         }
     };
 
-    tracing::info!("client registered: {} (id={})", client_name, client_id);
+    tracing::info!("client authenticated: {} (id={})", client_name, client_id);
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let (pong_tx, mut pong_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
     state
         .register_client(client_id, client_name.clone(), tx)
         .await;
 
+    let send_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                msg_opt = rx.recv() => {
+                    match msg_opt {
+                        Some(msg) => {
+                            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                pong_data_opt = pong_rx.recv() => {
+                    match pong_data_opt {
+                        Some(data) => {
+                            if ws_tx.send(Message::Pong(data.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+            }
+        }
+    });
+
     while let Some(msg_result) = ws_rx.next().await {
         match msg_result {
-            Ok(Message::Text(text)) => match serde_json::from_str::<ClientMessage>(&text) {
-                Ok(ClientMessage::Register { .. }) => {
-                    tracing::warn!("duplicate register from {}", client_name);
+            Ok(Message::Text(text)) => {
+                match serde_json::from_str::<remoshot_common::ClientMessage>(&text) {
+                    Ok(remoshot_common::ClientMessage::AuthResponse { .. }) => {
+                        tracing::warn!("duplicate auth from {}", client_name);
+                    }
+                    Ok(remoshot_common::ClientMessage::ScreenshotResponse { .. }) => {
+                        tracing::warn!("unexpected JSON screenshot response from {}", client_name);
+                    }
+                    Err(e) => {
+                        tracing::warn!("invalid JSON message from {}: {}", client_name, e);
+                    }
                 }
-                Ok(ClientMessage::ScreenshotResponse { .. }) => {
-                    tracing::warn!("unexpected JSON screenshot response from {}", client_name);
+            }
+            Ok(Message::Binary(data)) => {
+                match rmp_serde::from_slice::<remoshot_common::ClientMessage>(&data) {
+                    Ok(remoshot_common::ClientMessage::ScreenshotResponse {
+                        request_id,
+                        screenshots,
+                    }) => {
+                        handle_screenshot_response(&state, &client_name, &request_id, screenshots)
+                            .await;
+                    }
+                    Ok(remoshot_common::ClientMessage::AuthResponse { .. }) => {
+                        tracing::warn!("unexpected MessagePack auth from {}", client_name);
+                    }
+                    Err(e) => {
+                        tracing::warn!("invalid MessagePack message from {}: {}", client_name, e);
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("invalid JSON message from {}: {}", client_name, e);
-                }
-            },
-            Ok(Message::Binary(data)) => match rmp_serde::from_slice::<ClientMessage>(&data) {
-                Ok(ClientMessage::ScreenshotResponse {
-                    request_id,
-                    screenshots,
-                }) => {
-                    handle_screenshot_response(&state, &client_name, &request_id, screenshots)
-                        .await;
-                }
-                Ok(ClientMessage::Register { .. }) => {
-                    tracing::warn!("unexpected MessagePack register from {}", client_name);
-                }
-                Err(e) => {
-                    tracing::warn!("invalid MessagePack message from {}: {}", client_name, e);
-                }
-            },
+            }
+            Ok(Message::Ping(data)) => {
+                let _ = pong_tx.send(data.to_vec());
+            }
+            Ok(Message::Pong(_)) => {}
             Ok(Message::Close(_)) | Err(_) => break,
             _ => {}
         }

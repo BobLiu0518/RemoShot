@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub struct Config {
     pub server_addr: String,
     pub machine_name: String,
+    pub secret_key: String,
 }
 
 impl Default for Config {
@@ -14,6 +15,7 @@ impl Default for Config {
         Self {
             server_addr: "ws://127.0.0.1:8283/ws".to_string(),
             machine_name: whoami().unwrap_or_else(|| "unknown".to_string()),
+            secret_key: String::new(),
         }
     }
 }

@@ -27,11 +27,12 @@ pub struct AppState {
     pub stored_images: Mutex<Vec<StoredImage>>,
     pub retention_mins: u64,
     pub image_dir: PathBuf,
+    pub secret_key: String,
     pub _shutdown_tx: broadcast::Sender<()>,
 }
 
 impl AppState {
-    pub fn new(retention_mins: u64, image_dir: PathBuf) -> Self {
+    pub fn new(retention_mins: u64, image_dir: PathBuf, secret_key: String) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             clients: RwLock::new(HashMap::new()),
@@ -40,6 +41,7 @@ impl AppState {
             stored_images: Mutex::new(Vec::new()),
             retention_mins,
             image_dir,
+            secret_key,
             _shutdown_tx: shutdown_tx,
         }
     }

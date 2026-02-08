@@ -26,6 +26,7 @@ rand = "0.8"
 url = "2"
 slint = "1.15"
 chrono = { version = "0.4", features = ["clock"] }
+single-instance = "0.3"
 
 [build-dependencies]
 slint-build = "1.15"

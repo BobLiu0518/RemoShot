@@ -3,11 +3,11 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::capture;
-use remoshot_common::{ClientMessage, ServerMessage};
 
 pub async fn run(
     server_addr: String,
     machine_name: String,
+    secret_key: String,
     status_tx: mpsc::UnboundedSender<ConnectionStatus>,
     mut cancel_rx: watch::Receiver<bool>,
 ) {
@@ -28,7 +28,15 @@ pub async fn run(
                 let _ = status_tx.send(ConnectionStatus::Connected);
                 tracing::info!("connected to {}", server_addr);
 
-                if handle_connection(ws_stream, machine_name.clone(), &status_tx, &mut cancel_rx).await {
+                if handle_connection(
+                    ws_stream,
+                    machine_name.clone(),
+                    secret_key.clone(),
+                    &status_tx,
+                    &mut cancel_rx,
+                )
+                .await
+                {
                     return;
                 }
             }
@@ -58,27 +66,90 @@ async fn handle_connection(
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
     machine_name: String,
+    secret_key: String,
     status_tx: &mpsc::UnboundedSender<ConnectionStatus>,
     cancel_rx: &mut watch::Receiver<bool>,
 ) -> bool {
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
-    let register = ClientMessage::Register {
-        name: machine_name.clone(),
+    let nonce = loop {
+        tokio::select! {
+            _ = cancel_rx.changed() => {
+                tracing::info!("connection cancelled during auth");
+                return true;
+            }
+            msg_opt = ws_rx.next() => {
+                match msg_opt {
+                    Some(Ok(Message::Text(text))) => {
+                        match serde_json::from_str::<remoshot_common::ServerMessage>(&text) {
+                            Ok(remoshot_common::ServerMessage::AuthChallenge { nonce }) => {
+                                break nonce;
+                            }
+                            Ok(msg) => {
+                                tracing::warn!("unexpected message during auth: {:?}", msg);
+                                continue;
+                            }
+                            Err(e) => {
+                                tracing::warn!("invalid auth message: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) => {
+                        tracing::info!("server closed connection during auth");
+                        return false;
+                    }
+                    Some(Err(e)) => {
+                        tracing::error!("ws error during auth: {}", e);
+                        return false;
+                    }
+                    None => return false,
+                    _ => continue,
+                }
+            }
+        }
     };
-    let msg = serde_json::to_string(&register).unwrap();
+
+    let hmac = remoshot_common::compute_hmac(&secret_key, &nonce);
+    let auth_response = remoshot_common::ClientMessage::AuthResponse {
+        name: machine_name.clone(),
+        hmac,
+    };
+    let msg = serde_json::to_string(&auth_response).unwrap();
     if let Err(e) = ws_tx.send(Message::Text(msg.into())).await {
-        tracing::error!("failed to send register: {}", e);
+        tracing::error!("failed to send auth response: {}", e);
         let _ = status_tx.send(ConnectionStatus::Disconnected);
         return false;
     }
-    tracing::info!("registered as '{}'", machine_name);
+    tracing::info!("authenticated as '{}'", machine_name);
+
+    let (ping_tx, mut ping_rx) = mpsc::unbounded_channel();
+
+    let ping_task = {
+        let ping_tx = ping_tx.clone();
+        tokio::spawn(async move {
+            let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ping_interval.tick().await;
+                if ping_tx.send(()).is_err() {
+                    break;
+                }
+            }
+        })
+    };
 
     loop {
         tokio::select! {
             _ = cancel_rx.changed() => {
                 tracing::info!("connection cancelled");
+                ping_task.abort();
                 return true;
+            }
+            _ = ping_rx.recv() => {
+                if ws_tx.send(Message::Ping(vec![].into())).await.is_err() {
+                    break;
+                }
             }
             msg_opt = ws_rx.next() => {
                 if !handle_message(msg_opt, &mut ws_tx).await {
@@ -87,6 +158,8 @@ async fn handle_connection(
             }
         }
     }
+
+    ping_task.abort();
 
     let _ = status_tx.send(ConnectionStatus::Disconnected);
     false
@@ -103,19 +176,21 @@ async fn handle_message(
 ) -> bool {
     match msg_opt {
         Some(Ok(Message::Text(text))) => {
-            match serde_json::from_str::<ServerMessage>(&text) {
-                Ok(ServerMessage::ScreenshotRequest { request_id }) => {
+            match serde_json::from_str::<remoshot_common::ServerMessage>(&text) {
+                Ok(remoshot_common::ServerMessage::ScreenshotRequest { request_id }) => {
                     tracing::info!("screenshot request: {}", request_id);
 
-                    let screenshots = tokio::task::spawn_blocking(
-                        capture::capture_all_screens,
-                    )
-                    .await
-                    .unwrap_or_default();
+                    let screenshots = tokio::task::spawn_blocking(capture::capture_all_screens)
+                        .await
+                        .unwrap_or_default();
 
-                    tracing::info!("captured {} screenshots for request {}", screenshots.len(), request_id);
+                    tracing::info!(
+                        "captured {} screenshots for request {}",
+                        screenshots.len(),
+                        request_id
+                    );
 
-                    let response = ClientMessage::ScreenshotResponse {
+                    let response = remoshot_common::ClientMessage::ScreenshotResponse {
                         request_id: request_id.clone(),
                         screenshots,
                     };
@@ -125,6 +200,9 @@ async fn handle_message(
                         return false;
                     }
                     tracing::info!("screenshot response sent for request {}", request_id);
+                }
+                Ok(remoshot_common::ServerMessage::AuthChallenge { .. }) => {
+                    tracing::warn!("unexpected auth challenge after authentication");
                 }
                 Err(e) => {
                     tracing::warn!("unknown message: {}", e);
@@ -137,7 +215,7 @@ async fn handle_message(
             false
         }
         Some(Ok(Message::Ping(data))) => {
-            let _ = ws_tx.send(Message::Pong(data)).await;
+            let _ = ws_tx.send(Message::Pong(data.clone())).await;
             true
         }
         Some(Err(e)) => {

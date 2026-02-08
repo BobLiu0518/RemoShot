@@ -4,11 +4,12 @@ export component SettingsWindow inherits Window {
     title: "RemoShot Settings";
     min-width: 420px;
     max-width: 420px;
-    min-height: 200px;
-    max-height: 200px;
+    min-height: 260px;
+    max-height: 260px;
 
     in-out property <string> server-addr;
     in-out property <string> machine-name;
+    in-out property <string> secret-key;
 
     callback save();
     callback cancel();
@@ -31,6 +32,15 @@ export component SettingsWindow inherits Window {
         name-edit := LineEdit {
             text <=> root.machine-name;
             placeholder-text: "my-device";
+        }
+
+        Text {
+            text: "Secret key";
+        }
+        key-edit := LineEdit {
+            text <=> root.secret-key;
+            input-type: password;
+            placeholder-text: "Enter server secret key";
         }
 
         HorizontalBox {
