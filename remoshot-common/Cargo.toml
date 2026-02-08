@@ -10,3 +10,6 @@ rmp-serde = "1.3"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+
+[dev-dependencies]
+cargo-husky = { version = "1", features = ["precommit-hook", "run-cargo-check", "run-cargo-fmt", "run-cargo-clippy"] }
