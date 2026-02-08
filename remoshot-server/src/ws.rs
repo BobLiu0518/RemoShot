@@ -137,7 +137,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             }
             Ok(Message::Pong(_)) => {}
             Ok(Message::Close(_)) | Err(_) => break,
-            _ => {}
         }
     }
 
@@ -190,10 +189,10 @@ async fn handle_screenshot_response(
         let mut req = pending.lock().await;
         req.received.insert(client_name.to_string(), image_paths);
 
-        if req.received.len() >= req.expected {
-            if let Some(notify) = req.notify.take() {
-                let _ = notify.send(req.received.clone());
-            }
+        if req.received.len() >= req.expected
+            && let Some(notify) = req.notify.take()
+        {
+            let _ = notify.send(req.received.clone());
         }
     }
 }

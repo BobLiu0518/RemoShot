@@ -62,7 +62,7 @@ pub fn run(log_buf: LogBuffer) {
 
             {
                 let text = status_c.lock().unwrap().clone();
-                item_status.set_text(&format!("Status: {text}"));
+                item_status.set_text(format!("Status: {text}"));
             }
 
             while let Ok(event) = menu_rx.try_recv() {
