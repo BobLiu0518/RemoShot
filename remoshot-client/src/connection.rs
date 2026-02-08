@@ -12,6 +12,7 @@ pub async fn run(
     mut cancel_rx: watch::Receiver<bool>,
 ) {
     let mut attempt: u32 = 0;
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     loop {
         if *cancel_rx.borrow() {
