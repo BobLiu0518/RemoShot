@@ -1,7 +1,7 @@
 use slint::ComponentHandle;
 use std::sync::{Arc, Mutex};
 use tray_icon::TrayIconBuilder;
-use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
 
 use crate::config::{self, Config};
 use crate::connection::{self, ConnectionStatus};
@@ -12,14 +12,20 @@ pub fn run(log_buf: LogBuffer) {
     let first_launch = config::load().is_none();
     let config = Arc::new(Mutex::new(config::load().unwrap_or_default()));
 
+    let auto_launch = create_auto_launch();
+    let is_auto_launch_enabled = auto_launch.is_enabled().unwrap_or(false);
+
     let menu = Menu::new();
     let item_status = MenuItem::new("Status: Not connected", false, None);
     let item_settings = MenuItem::new("Settings", true, None);
     let item_logs = MenuItem::new("View Logs", true, None);
+    let item_auto_launch =
+        CheckMenuItem::new("Launch on startup", true, is_auto_launch_enabled, None);
     let item_quit = MenuItem::new("Quit", true, None);
     menu.append(&item_status).unwrap();
     menu.append(&item_settings).unwrap();
     menu.append(&item_logs).unwrap();
+    menu.append(&item_auto_launch).unwrap();
     menu.append(&item_quit).unwrap();
 
     let icon = load_icon();
@@ -44,6 +50,7 @@ pub fn run(log_buf: LogBuffer) {
     let settings_id = item_settings.id().clone();
     let quit_id = item_quit.id().clone();
     let logs_id = item_logs.id().clone();
+    let auto_launch_id = item_auto_launch.id().clone();
     let menu_rx = MenuEvent::receiver();
 
     let config_c = config.clone();
@@ -70,6 +77,8 @@ pub fn run(log_buf: LogBuffer) {
                     show_settings_window(&config_c, &rt_c, &cancel_c, &status_c, &item_status);
                 } else if event.id() == &logs_id {
                     show_log_window(&log_buf_c);
+                } else if event.id() == &auto_launch_id {
+                    handle_auto_launch_toggle(&item_auto_launch);
                 } else if event.id() == &quit_id {
                     if let Some(tx) = cancel_c.lock().unwrap().take() {
                         let _ = tx.send(true);
@@ -255,4 +264,37 @@ fn load_icon() -> tray_icon::Icon {
         rgba.extend_from_slice(&[0x33, 0x99, 0xFF, 0xFF]);
     }
     tray_icon::Icon::from_rgba(rgba, size, size).expect("failed to create icon")
+}
+
+fn create_auto_launch() -> auto_launch::AutoLaunch {
+    let exe_path = std::env::current_exe().expect("Failed to get executable path");
+    auto_launch::AutoLaunchBuilder::new()
+        .set_app_name("RemoShot")
+        .set_app_path(&exe_path.to_string_lossy())
+        .build()
+        .expect("Failed to create auto-launch")
+}
+
+fn handle_auto_launch_toggle(item: &CheckMenuItem) {
+    let auto_launch = create_auto_launch();
+    let is_enabled = auto_launch.is_enabled().unwrap_or(false);
+
+    match is_enabled {
+        true => {
+            if let Err(e) = auto_launch.disable() {
+                tracing::error!("Failed to disable auto-launch: {}", e);
+            } else {
+                tracing::info!("Auto-launch disabled");
+                item.set_checked(false);
+            }
+        }
+        false => {
+            if let Err(e) = auto_launch.enable() {
+                tracing::error!("Failed to enable auto-launch: {}", e);
+            } else {
+                tracing::info!("Auto-launch enabled");
+                item.set_checked(true);
+            }
+        }
+    }
 }
