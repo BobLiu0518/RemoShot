@@ -1,4 +1,5 @@
 use slint::ComponentHandle;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tray_icon::TrayIconBuilder;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
@@ -33,6 +34,7 @@ pub fn run(log_buf: LogBuffer) {
         .with_menu(Box::new(menu))
         .with_tooltip("RemoShot")
         .with_icon(icon)
+        .with_menu_on_left_click(true)
         .build()
         .expect("failed to create tray icon");
 
@@ -267,12 +269,34 @@ fn load_icon() -> tray_icon::Icon {
 }
 
 fn create_auto_launch() -> auto_launch::AutoLaunch {
-    let exe_path = std::env::current_exe().expect("Failed to get executable path");
+    let app_path = get_app_path().expect("Failed to get app path");
+
     auto_launch::AutoLaunchBuilder::new()
         .set_app_name("RemoShot")
-        .set_app_path(&exe_path.to_string_lossy())
+        .set_app_path(&app_path.to_string_lossy())
         .build()
         .expect("Failed to create auto-launch")
+}
+
+#[cfg(target_os = "macos")]
+fn get_app_path() -> Option<PathBuf> {
+    use objc2_foundation::NSBundle;
+
+    unsafe {
+        let bundle = NSBundle::mainBundle();
+
+        if bundle.bundleIdentifier().is_none() {
+            return std::env::current_exe().ok();
+        }
+
+        let path = bundle.bundlePath();
+        Some(PathBuf::from(path.to_string()))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn get_app_path() -> Option<PathBuf> {
+    std::env::current_exe().ok()
 }
 
 fn handle_auto_launch_toggle(item: &CheckMenuItem) {

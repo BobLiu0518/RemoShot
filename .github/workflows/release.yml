@@ -21,16 +21,16 @@ jobs:
             suffix: .exe
           - os: macos-latest
             target: x86_64-apple-darwin
-            suffix: ""
+            suffix: ''
           - os: macos-latest
             target: aarch64-apple-darwin
-            suffix: ""
+            suffix: ''
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            suffix: ""
+            suffix: ''
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            suffix: ""
+            suffix: ''
 
     steps:
       - name: Checkout code
@@ -41,7 +41,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install dependencies
+      - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -61,15 +61,38 @@ jobs:
       - name: Build remoshot
         shell: bash
         run: |
+          mkdir -p dist
           cargo build --release --target ${{ matrix.target }} -p remoshot-server
           cargo build --release --target ${{ matrix.target }} -p remoshot-client
+
+      - name: Package macOS App and Sign
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cargo install cargo-packager --locked
+          cargo packager --release --manifest-path remoshot-client/Cargo.toml --target ${{ matrix.target }}
+
+          APP_NAME="RemoShot.app"
+          APP_PATH="target/${{ matrix.target }}/release/$APP_NAME"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Error: .app not found at $APP_PATH"
+            exit 1
+          fi
+
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign -dv "$APP_PATH"
+
+          ditto -c -k --keepParent "$APP_PATH" "dist/remoshot-client-${{ matrix.target }}.zip"
 
       - name: Prepare Assets
         shell: bash
         run: |
-          mkdir -p dist
           cp target/${{ matrix.target }}/release/remoshot-server${{ matrix.suffix }} dist/remoshot-server-${{ matrix.target }}${{ matrix.suffix }}
-          cp target/${{ matrix.target }}/release/remoshot-client${{ matrix.suffix }} dist/remoshot-client-${{ matrix.target }}${{ matrix.suffix }}
+
+          if [ "${{ runner.os }}" != "macOS" ]; then
+            cp target/${{ matrix.target }}/release/remoshot-client${{ matrix.suffix }} dist/remoshot-client-${{ matrix.target }}${{ matrix.suffix }}
+          fi
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
